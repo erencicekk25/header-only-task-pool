@@ -1,3 +1,5 @@
-add_executable(basic_usage basic_usage.cpp)
-target_link_libraries(basic_usage PRIVATE taskpool::taskpool)
-taskpool_configure_target(basic_usage)
+foreach(example basic_usage priorities_and_groups lifecycle_and_shutdown)
+    add_executable(${example} ${example}.cpp)
+    target_link_libraries(${example} PRIVATE taskpool::taskpool)
+    taskpool_configure_target(${example})
+endforeach()
