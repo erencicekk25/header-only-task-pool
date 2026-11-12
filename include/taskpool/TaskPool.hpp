@@ -9,6 +9,8 @@
 //   * Tasks are stored as move-only callables, so nothing is ever copied.
 //   * `submit()` wraps work in a `std::packaged_task` and hands back the
 //     matching `std::future`; `post()` is the zero-overhead fire-and-forget path.
+//   * `spawn()` returns a `Task<T>` handle with an observable lifecycle
+//     (Pending -> Running -> Completed / Failed, or Pending -> Cancelled).
 //   * Every entry point has a `*_with_priority` variant; workers always serve
 //     the highest-priority lane first.
 
@@ -30,6 +32,7 @@
 #include <vector>
 
 #include "Priority.hpp"
+#include "Task.hpp"
 #include "TaskQueue.hpp"
 #include "detail/MoveOnlyTask.hpp"
 
@@ -133,6 +136,29 @@ public:
         // packaged_task is move-only: it travels into the queue without a copy.
         enqueue(detail::MoveOnlyTask(std::move(task)), priority);
         return future;
+    }
+
+    /// Schedules `f(args...)` and returns a `Task<R>` handle that exposes the
+    /// task's lifecycle (`state()`) and allows cancelling it before it starts.
+    template <typename F, typename... Args>
+    [[nodiscard]] auto spawn(F&& f, Args&&... args)
+        -> Task<std::invoke_result_t<std::decay_t<F>, std::decay_t<Args>...>> {
+        return spawn_with_priority(Priority::Normal, std::forward<F>(f),
+                                   std::forward<Args>(args)...);
+    }
+
+    /// Same as `spawn()`, but schedules the task in the lane for `priority`.
+    template <typename F, typename... Args>
+    [[nodiscard]] auto spawn_with_priority(Priority priority, F&& f, Args&&... args)
+        -> Task<std::invoke_result_t<std::decay_t<F>, std::decay_t<Args>...>> {
+        using Result = std::invoke_result_t<std::decay_t<F>, std::decay_t<Args>...>;
+
+        auto control = std::make_shared<detail::TaskControl>();
+        std::future<Result> future = submit_with_priority(
+            priority, detail::make_lifecycle_task(
+                          control, detail::bind_task(std::forward<F>(f),
+                                                     std::forward<Args>(args)...)));
+        return Task<Result>(std::move(future), std::move(control));
     }
 
     /// Fire-and-forget: schedules `f(args...)` and returns immediately.
