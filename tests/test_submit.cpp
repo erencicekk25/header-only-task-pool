@@ -52,6 +52,21 @@ TEST_CASE("submit() deduces the correct future type") {
     CHECK_EQ(f3.get(), 3);
 }
 
+TEST_CASE("submit() preserves reference and const-qualified results") {
+    int value = 17;
+    TaskPool pool(1);
+    auto reference = pool.submit([&value]() -> int& { return value; });
+    auto constant = pool.submit([]() -> const std::string { return "const value"; });
+    static_assert(std::is_same_v<decltype(reference), std::future<int&>>);
+    static_assert(std::is_same_v<decltype(constant), std::future<const std::string>>);
+
+    int& result = reference.get();
+    CHECK(&result == &value);
+    result = 42;
+    CHECK_EQ(value, 42);
+    CHECK_EQ(constant.get(), std::string("const value"));
+}
+
 TEST_CASE("submit() accepts free functions, functors and member functions") {
     TaskPool pool(2);
     Accumulator acc;
