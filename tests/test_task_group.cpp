@@ -78,6 +78,20 @@ TEST_CASE("TaskGroup::submit() returns futures and propagates exceptions") {
     CHECK_EQ(group.unfinished_tasks(), std::size_t{0});
 }
 
+TEST_CASE("TaskGroup::wait() does not depend on callers releasing their futures") {
+    // Regression: a packaged_task keeps its callable alive as long as the
+    // future does, so completion tracking must not live inside the callable.
+    TaskPool pool(2);
+    TaskGroup group(pool);
+    std::vector<std::future<int>> kept_alive;
+    for (int i = 0; i < 10; ++i) {
+        kept_alive.push_back(group.submit([i] { return i; }));
+    }
+    CHECK(group.wait_for(std::chrono::seconds(5)));
+    CHECK_EQ(group.unfinished_tasks(), std::size_t{0});
+    CHECK_EQ(kept_alive.back().get(), 9);
+}
+
 TEST_CASE("Throwing posted tasks are still accounted for by the group") {
     TaskPool pool(2);
     TaskGroup group(pool);

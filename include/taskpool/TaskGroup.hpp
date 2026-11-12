@@ -86,14 +86,19 @@ public:
     template <typename F, typename... Args>
     [[nodiscard]] auto submit(F&& f, Args&&... args)
         -> std::future<std::invoke_result_t<std::decay_t<F>, std::decay_t<Args>...>> {
-        return pool_.submit_with_priority(
-            priority_, track(std::forward<F>(f), std::forward<Args>(args)...));
+        // The token is attached to the queued task rather than captured by
+        // the callable: a packaged_task keeps its callable alive as long as
+        // the future, which would otherwise delay completion until the
+        // caller drops the future.
+        return pool_.submit_impl(priority_, detail::GroupToken(state_), std::forward<F>(f),
+                                 std::forward<Args>(args)...);
     }
 
     /// Like `TaskPool::post()`, but the task is tracked by this group.
     template <typename F, typename... Args>
     void post(F&& f, Args&&... args) {
-        pool_.post_with_priority(priority_, track(std::forward<F>(f), std::forward<Args>(args)...));
+        pool_.post_impl(priority_, detail::GroupToken(state_), std::forward<F>(f),
+                        std::forward<Args>(args)...);
     }
 
     /// Blocks until every task of this group has finished and been destroyed.
@@ -120,13 +125,6 @@ public:
     [[nodiscard]] Priority priority() const noexcept { return priority_; }
 
 private:
-    template <typename F, typename... Args>
-    auto track(F&& f, Args&&... args) {
-        return [token = detail::GroupToken(state_),
-                task = detail::bind_task(std::forward<F>(f), std::forward<Args>(args)...)]() mutable
-               -> decltype(auto) { return task(); };
-    }
-
     TaskPool& pool_;
     Priority priority_;
     std::shared_ptr<detail::GroupState> state_;

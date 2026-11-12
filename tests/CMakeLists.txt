@@ -5,7 +5,8 @@ add_executable(taskpool_tests
     test_submit.cpp
     test_priority.cpp
     test_task_group.cpp
-    test_task_lifecycle.cpp)
+    test_task_lifecycle.cpp
+    test_shutdown.cpp)
 
 target_link_libraries(taskpool_tests PRIVATE taskpool::taskpool)
 taskpool_configure_target(taskpool_tests)

@@ -20,6 +20,7 @@
 #include <optional>
 #include <queue>
 #include <utility>
+#include <vector>
 
 #include "Priority.hpp"
 
@@ -94,6 +95,28 @@ public:
             closed_ = true;
         }
         not_empty_.notify_all();
+    }
+
+    /// Atomically closes the queue and removes every remaining item, highest
+    /// priority first. Consumers observe an empty, closed queue right away,
+    /// so no worker can pick up an item that is about to be discarded.
+    [[nodiscard]] std::vector<T> close_and_take_all() {
+        std::vector<T> items;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            closed_ = true;
+            items.reserve(size_);
+            for (std::size_t lane = kPriorityCount; lane-- > 0;) {
+                std::queue<T>& queue = lanes_[lane];
+                while (!queue.empty()) {
+                    items.push_back(std::move(queue.front()));
+                    queue.pop();
+                }
+            }
+            size_ = 0;
+        }
+        not_empty_.notify_all();
+        return items;
     }
 
     [[nodiscard]] bool closed() const {

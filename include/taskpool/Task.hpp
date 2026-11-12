@@ -104,6 +104,30 @@ private:
     int exceptions_on_entry_;
 };
 
+/// Travels with the queued task (as a TaskPool attachment). If the task is
+/// destroyed without ever running (e.g. discarded by
+/// `ShutdownPolicy::DiscardPending`), it moves Pending -> Cancelled so the
+/// handle never reports a stale state. After a normal run it is a no-op.
+class LifecycleOwner {
+public:
+    explicit LifecycleOwner(std::shared_ptr<TaskControl> control) noexcept
+        : control_(std::move(control)) {}
+
+    LifecycleOwner(LifecycleOwner&&) noexcept = default;
+    LifecycleOwner& operator=(LifecycleOwner&&) = delete;
+    LifecycleOwner(const LifecycleOwner&) = delete;
+    LifecycleOwner& operator=(const LifecycleOwner&) = delete;
+
+    ~LifecycleOwner() {
+        if (control_) {
+            control_->try_transition(TaskState::Pending, TaskState::Cancelled);
+        }
+    }
+
+private:
+    std::shared_ptr<TaskControl> control_;
+};
+
 /// Wraps `closure` so that it drives the lifecycle state machine.
 template <typename Closure>
 auto make_lifecycle_task(std::shared_ptr<TaskControl> control, Closure&& closure) {
