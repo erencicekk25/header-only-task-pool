@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
 
 project(header_only_task_pool
-    VERSION 1.0.0
+    VERSION 1.1.0
     DESCRIPTION "Header-only, zero-dependency C++17 thread pool with std::future support"
     LANGUAGES CXX)
 

@@ -9,6 +9,8 @@
 //   * Tasks are stored as move-only callables, so nothing is ever copied.
 //   * `submit()` wraps work in a `std::packaged_task` and hands back the
 //     matching `std::future`; `post()` is the zero-overhead fire-and-forget path.
+//   * Every entry point has a `*_with_priority` variant; workers always serve
+//     the highest-priority lane first.
 
 #ifndef TASKPOOL_TASK_POOL_HPP
 #define TASKPOOL_TASK_POOL_HPP
@@ -27,11 +29,12 @@
 #include <utility>
 #include <vector>
 
+#include "Priority.hpp"
 #include "TaskQueue.hpp"
 #include "detail/MoveOnlyTask.hpp"
 
 #define TASKPOOL_VERSION_MAJOR 1
-#define TASKPOOL_VERSION_MINOR 0
+#define TASKPOOL_VERSION_MINOR 1
 #define TASKPOOL_VERSION_PATCH 0
 
 namespace taskpool {
@@ -113,6 +116,14 @@ public:
     template <typename F, typename... Args>
     [[nodiscard]] auto submit(F&& f, Args&&... args)
         -> std::future<std::invoke_result_t<std::decay_t<F>, std::decay_t<Args>...>> {
+        return submit_with_priority(Priority::Normal, std::forward<F>(f),
+                                    std::forward<Args>(args)...);
+    }
+
+    /// Same as `submit()`, but schedules the task in the lane for `priority`.
+    template <typename F, typename... Args>
+    [[nodiscard]] auto submit_with_priority(Priority priority, F&& f, Args&&... args)
+        -> std::future<std::invoke_result_t<std::decay_t<F>, std::decay_t<Args>...>> {
         using Result = std::invoke_result_t<std::decay_t<F>, std::decay_t<Args>...>;
 
         std::packaged_task<Result()> task(detail::make_packaged_task_compatible(
@@ -120,7 +131,7 @@ public:
         std::future<Result> future = task.get_future();
 
         // packaged_task is move-only: it travels into the queue without a copy.
-        enqueue(detail::MoveOnlyTask(std::move(task)));
+        enqueue(detail::MoveOnlyTask(std::move(task)), priority);
         return future;
     }
 
@@ -129,10 +140,17 @@ public:
     /// use `submit()` when you need the result or the exception.
     template <typename F, typename... Args>
     void post(F&& f, Args&&... args) {
+        post_with_priority(Priority::Normal, std::forward<F>(f), std::forward<Args>(args)...);
+    }
+
+    /// Same as `post()`, but schedules the task in the lane for `priority`.
+    template <typename F, typename... Args>
+    void post_with_priority(Priority priority, F&& f, Args&&... args) {
         static_assert(std::is_invocable_v<std::decay_t<F>, std::decay_t<Args>...>,
                       "post(): callable cannot be invoked with the given arguments");
         enqueue(detail::MoveOnlyTask(
-            detail::bind_task(std::forward<F>(f), std::forward<Args>(args)...)));
+                    detail::bind_task(std::forward<F>(f), std::forward<Args>(args)...)),
+                priority);
     }
 
     /// Blocks until the queue is empty and no task is running.
@@ -149,6 +167,11 @@ public:
     /// Tasks waiting in the queue that no worker has picked up yet.
     [[nodiscard]] std::size_t pending_tasks() const { return queue_.size(); }
 
+    /// Tasks waiting in the lane for `priority`.
+    [[nodiscard]] std::size_t pending_tasks(Priority priority) const {
+        return queue_.size(priority);
+    }
+
     /// Tasks that are either queued or currently executing.
     [[nodiscard]] std::size_t unfinished_tasks() const noexcept {
         return unfinished_.load(std::memory_order_acquire);
@@ -161,11 +184,11 @@ public:
     }
 
 private:
-    void enqueue(detail::MoveOnlyTask&& task) {
+    void enqueue(detail::MoveOnlyTask&& task, Priority priority) {
         // Count the task *before* it becomes visible to workers, otherwise a
         // fast worker could finish it and decrement below zero.
         unfinished_.fetch_add(1, std::memory_order_relaxed);
-        if (!queue_.push(std::move(task))) {
+        if (!queue_.push(std::move(task), priority)) {
             task_finished();
             throw std::runtime_error("taskpool::TaskPool: cannot enqueue on a stopped pool");
         }
