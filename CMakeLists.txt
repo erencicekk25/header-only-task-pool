@@ -15,6 +15,7 @@ endif()
 
 option(TASKPOOL_BUILD_TESTS "Build the unit tests" ${TASKPOOL_IS_TOP_LEVEL})
 option(TASKPOOL_BUILD_EXAMPLES "Build the usage examples" ${TASKPOOL_IS_TOP_LEVEL})
+option(TASKPOOL_BUILD_BENCHMARKS "Build the benchmark suite" ${TASKPOOL_IS_TOP_LEVEL})
 option(TASKPOOL_ENABLE_SANITIZERS "Build tests with AddressSanitizer + UBSan (GCC/Clang)" OFF)
 option(TASKPOOL_ENABLE_TSAN "Build tests with ThreadSanitizer (GCC/Clang)" OFF)
 
@@ -67,6 +68,10 @@ endif()
 
 if(TASKPOOL_BUILD_EXAMPLES)
     add_subdirectory(examples)
+endif()
+
+if(TASKPOOL_BUILD_BENCHMARKS)
+    add_subdirectory(benchmarks)
 endif()
 
 # ---------------------------------------------------------------------------

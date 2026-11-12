@@ -40,6 +40,17 @@ private:
     std::string message_;
 };
 
+template <typename A, typename E>
+void check_eq(const A& actual, const E& expected, const char* actual_expr,
+              const char* expected_expr, const char* file, int line) {
+    if (!(actual == expected)) {
+        std::ostringstream oss;
+        oss << file << ':' << line << ": CHECK_EQ(" << actual_expr << ", " << expected_expr
+            << ") failed: " << actual << " != " << expected;
+        throw AssertionFailure(oss.str());
+    }
+}
+
 inline int run_all() {
     int failed = 0;
     for (const TestCase& test : registry()) {
@@ -79,17 +90,10 @@ inline int run_all() {
         }                                                                            \
     } while (false)
 
+// Evaluated as one full-expression, so references into temporaries
+// (e.g. `*future.get()` or `*queue.wait_pop()`) stay valid during comparison.
 #define CHECK_EQ(actual, expected)                                                   \
-    do {                                                                             \
-        const auto& tp_a_ = (actual);                                                \
-        const auto& tp_e_ = (expected);                                              \
-        if (!(tp_a_ == tp_e_)) {                                                     \
-            std::ostringstream tp_oss_;                                              \
-            tp_oss_ << __FILE__ << ':' << __LINE__ << ": CHECK_EQ(" #actual ", "     \
-                    << #expected ") failed: " << tp_a_ << " != " << tp_e_;           \
-            throw ::testing::AssertionFailure(tp_oss_.str());                        \
-        }                                                                            \
-    } while (false)
+    ::testing::check_eq((actual), (expected), #actual, #expected, __FILE__, __LINE__)
 
 #define CHECK_THROWS_AS(expr, exception_type)                                        \
     do {                                                                             \

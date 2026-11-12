@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <functional>
 #include <future>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -46,6 +47,25 @@ auto bind_task(F&& f, Args&&... args) {
             bound = std::make_tuple(std::forward<Args>(args)...)]() mutable -> decltype(auto) {
         return std::apply(std::move(fn), std::move(bound));
     };
+}
+
+/// Some MSVC STL releases store a packaged_task's callable in a copyable
+/// wrapper and therefore reject move-only callables. On that STL only, a
+/// move-only closure is placed behind a shared_ptr to make it copyable.
+/// Every other standard library receives the closure untouched.
+template <typename Closure>
+auto make_packaged_task_compatible(Closure&& closure) {
+#if defined(_MSVC_STL_VERSION)
+    using Stored = std::decay_t<Closure>;
+    if constexpr (!std::is_copy_constructible_v<Stored>) {
+        return [shared = std::make_shared<Stored>(std::forward<Closure>(closure))]() mutable
+               -> decltype(auto) { return (*shared)(); };
+    } else {
+        return Stored(std::forward<Closure>(closure));
+    }
+#else
+    return std::decay_t<Closure>(std::forward<Closure>(closure));
+#endif
 }
 
 }  // namespace detail
@@ -95,8 +115,8 @@ public:
         -> std::future<std::invoke_result_t<std::decay_t<F>, std::decay_t<Args>...>> {
         using Result = std::invoke_result_t<std::decay_t<F>, std::decay_t<Args>...>;
 
-        std::packaged_task<Result()> task(
-            detail::bind_task(std::forward<F>(f), std::forward<Args>(args)...));
+        std::packaged_task<Result()> task(detail::make_packaged_task_compatible(
+            detail::bind_task(std::forward<F>(f), std::forward<Args>(args)...)));
         std::future<Result> future = task.get_future();
 
         // packaged_task is move-only: it travels into the queue without a copy.

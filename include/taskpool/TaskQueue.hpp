@@ -38,16 +38,22 @@ public:
     /// Moves `item` into the queue and wakes one waiting consumer.
     /// Returns false (leaving `item` untouched) if the queue has been closed.
     [[nodiscard]] bool push(T&& item) {
+        bool wake_consumer = false;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (closed_) {
                 return false;
             }
             queue_.push(std::move(item));
+            // Skip the (potentially syscall-backed) notification when every
+            // consumer is busy: they will find the item on their next pop.
+            wake_consumer = waiting_consumers_ > 0;
         }
         // Notify outside the lock so the woken consumer does not immediately
         // block on a mutex we still hold.
-        not_empty_.notify_one();
+        if (wake_consumer) {
+            not_empty_.notify_one();
+        }
         return true;
     }
 
@@ -61,7 +67,11 @@ public:
     /// Returns std::nullopt only when no more items will ever arrive.
     [[nodiscard]] std::optional<T> wait_pop() {
         std::unique_lock<std::mutex> lock(mutex_);
-        not_empty_.wait(lock, [this] { return closed_ || !queue_.empty(); });
+        if (!closed_ && queue_.empty()) {
+            ++waiting_consumers_;
+            not_empty_.wait(lock, [this] { return closed_ || !queue_.empty(); });
+            --waiting_consumers_;
+        }
         return pop_front_locked();
     }
 
@@ -109,6 +119,7 @@ private:
     mutable std::mutex mutex_;
     std::condition_variable not_empty_;
     std::queue<T> queue_;
+    std::size_t waiting_consumers_ = 0;  // consumers blocked in wait_pop()
     bool closed_ = false;
 };
 

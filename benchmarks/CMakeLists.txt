@@ -1,0 +1,3 @@
+add_executable(taskpool_benchmark benchmark.cpp)
+target_link_libraries(taskpool_benchmark PRIVATE taskpool::taskpool)
+taskpool_configure_target(taskpool_benchmark)
