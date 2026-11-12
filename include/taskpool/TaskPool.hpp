@@ -7,6 +7,8 @@
 //   * The destructor waits for every queued task (including tasks spawned by
 //     other tasks) to finish before the threads are joined - no work is lost.
 //   * Tasks are stored as move-only callables, so nothing is ever copied.
+//   * `submit()` wraps work in a `std::packaged_task` and hands back the
+//     matching `std::future`; `post()` is the zero-overhead fire-and-forget path.
 
 #ifndef TASKPOOL_TASK_POOL_HPP
 #define TASKPOOL_TASK_POOL_HPP
@@ -15,6 +17,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <functional>
+#include <future>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -76,6 +79,30 @@ public:
     TaskPool& operator=(const TaskPool&) = delete;
     TaskPool(TaskPool&&) = delete;
     TaskPool& operator=(TaskPool&&) = delete;
+
+    /// Schedules `f(args...)` and returns a `std::future` for its result.
+    ///
+    /// * Works with any callable: free functions, lambdas, functors, member
+    ///   function pointers (`submit(&Foo::bar, &foo, 1)`), etc.
+    /// * Arguments are moved/copied into the task (use `std::ref` to share).
+    /// * Move-only callables and arguments are fully supported.
+    /// * An exception thrown by the task is captured and rethrown from
+    ///   `future.get()`.
+    ///
+    /// Throws `std::runtime_error` if the pool is shutting down.
+    template <typename F, typename... Args>
+    [[nodiscard]] auto submit(F&& f, Args&&... args)
+        -> std::future<std::invoke_result_t<std::decay_t<F>, std::decay_t<Args>...>> {
+        using Result = std::invoke_result_t<std::decay_t<F>, std::decay_t<Args>...>;
+
+        std::packaged_task<Result()> task(
+            detail::bind_task(std::forward<F>(f), std::forward<Args>(args)...));
+        std::future<Result> future = task.get_future();
+
+        // packaged_task is move-only: it travels into the queue without a copy.
+        enqueue(detail::MoveOnlyTask(std::move(task)));
+        return future;
+    }
 
     /// Fire-and-forget: schedules `f(args...)` and returns immediately.
     /// Exceptions escaping the task are swallowed so a worker never dies;
