@@ -104,6 +104,33 @@ TEST_CASE("A throwing task ends in Failed and rethrows from get()") {
     CHECK_THROWS_AS(task.get(), std::domain_error);
 }
 
+TEST_CASE("Expired Task waits time out while queued and report ready after completion") {
+    using Clock = std::chrono::steady_clock;
+    const auto zero = std::chrono::milliseconds::zero();
+    const auto negative = std::chrono::milliseconds(-1);
+    const auto now = Clock::now();
+
+    TaskPool pool(1);
+    std::promise<void> release;
+    auto released = release.get_future().share();
+    auto blocker = pool.submit([released] { released.wait(); });
+    auto task = pool.spawn([] { return 42; });
+
+    CHECK(task.wait_for(zero) == std::future_status::timeout);
+    CHECK(task.wait_for(negative) == std::future_status::timeout);
+    CHECK(task.wait_until(now) == std::future_status::timeout);
+    CHECK(task.wait_until(now + negative) == std::future_status::timeout);
+
+    release.set_value();
+    blocker.get();
+    CHECK(task.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+    CHECK(task.wait_for(zero) == std::future_status::ready);
+    CHECK(task.wait_for(negative) == std::future_status::ready);
+    CHECK(task.wait_until(now) == std::future_status::ready);
+    CHECK(task.wait_until(now + negative) == std::future_status::ready);
+    CHECK_EQ(task.get(), 42);
+}
+
 TEST_CASE("cancel() on a pending task prevents it from ever running") {
     TaskPool pool(1);
     Gate gate;
